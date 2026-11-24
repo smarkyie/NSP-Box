@@ -293,7 +293,10 @@ class Archive:
             require(root<nd and (ex==NONE or ex<nd) and (rom==NONE or rom<nd) and not r and not r2 and not any(r3),'Invalid NUP package record.')
             require((mo==0)==(ms==0),'Invalid metadata extent.')
             require(ms<=32*1024*1024,'Package metadata exceeds 32 MiB.')
-            if ms:require(bo<=mo and ms<=fs-mo,'Invalid package metadata bounds.');regions.append((mo,mo+ms,('meta',i)))
+            if ms:
+                # Package metadata may precede the blob region or follow file extents.
+                require(to+ts<=mo and ms<=fs-mo and (mo>=bo or mo+ms<=bo),'Invalid package metadata bounds.')
+                regions.append((mo,mo+ms,('meta',i)))
             p=Package(tid,ver,kind,metadata=parse_tlvs(self.read_at(mo,ms)) if ms else [],flags=pflags)
             self.packages.append(p);records.append((root,ex,rom))
         validate_packages(self.packages)

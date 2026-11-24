@@ -73,6 +73,35 @@ class NupTests(unittest.TestCase):
         self.assertFalse((self.root/'bad-extract').exists());self.assertFalse(list(self.root.glob('.nup-extract-*')))
     def mutate_toc(self,path,edit):
         b=bytearray(path.read_bytes());size=struct.unpack_from('<Q',b,16)[0];toc=bytearray(b[128:128+size]);edit(toc);b[128:128+size]=toc;b[24:56]=hashlib.sha256(toc).digest();path.write_bytes(b)
+    def test_metadata_between_toc_and_blobs(self):
+        path=self.root/'metadata.nup'
+        metadata=[(5,b'Test NUP')]
+        nf.pack([nf.Package(TID,0,0,{'romfs/file':nf.Source.data(b'file')},metadata=metadata)],path)
+        original=path.read_bytes()
+        blob_offset=struct.unpack_from('<Q',original,56)[0]
+        meta_offset=struct.unpack_from('<Q',original,128+nf.TOC.size+32)[0]
+        meta=original[meta_offset:]
+        new_blob_offset=blob_offset+len(meta)
+        relocated=bytearray(original[:blob_offset]+meta+original[blob_offset:meta_offset])
+        struct.pack_into('<Q',relocated,56,new_blob_offset)
+        path.write_bytes(relocated)
+
+        def edit(toc):
+            _,packages,dirs,*_=nf.TOC.unpack_from(toc)
+            file_record=nf.TOC.size+packages*nf.PKG.size+dirs*nf.DIR.size
+            struct.pack_into('<Q',toc,file_record+16,new_blob_offset)
+            struct.pack_into('<Q',toc,nf.TOC.size+32,blob_offset)
+
+        self.mutate_toc(path,edit)
+        with nf.Archive(path) as archive:
+            self.assertEqual(archive.packages[0].metadata,metadata)
+            self.assertTrue(archive.verify()['verified'])
+
+        for offset in (blob_offset-1,blob_offset+1,new_blob_offset):
+            with self.subTest(offset=offset):
+                self.mutate_toc(path,lambda toc:struct.pack_into('<Q',toc,nf.TOC.size+32,offset))
+                with self.assertRaisesRegex(ValueError,'Invalid package metadata bounds'):
+                    nf.Archive(path)
     def test_unknown_codec_and_unsafe_labels(self):
         path=self.pack()
         def edit(t):
